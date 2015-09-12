@@ -594,6 +594,9 @@ struct per_session_data__lws_mirror {
 	int ringbuffer_tail;
 };
 
+unsigned char *framebuffer;
+unsigned long framecounter;
+
 struct per_session_data__ledpanel_frame {
 	struct libwebsocket *wsi;
 	// int ringbuffer_tail;
@@ -808,7 +811,8 @@ callback_ledpanel_frame(struct libwebsocket_context *context,
 		break;
 
 	case LWS_CALLBACK_RECEIVE:
-
+		printf("frame data received: %d bytes\n", len);
+/*
 		if (((ringbuffer_head - pss->ringbuffer_tail) &
 				  (MAX_MESSAGE_QUEUE - 1)) == (MAX_MESSAGE_QUEUE - 1)) {
 			lwsl_err("dropping!\n");
@@ -839,6 +843,17 @@ choke:
 
 //		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
 done:
+*/
+
+		char *inbytes = (char *)in;
+		int i;
+for(i=0; i<len; i++) {
+			framebuffer[i] = (inbytes[i] - '0') * 32;
+		}
+
+
+
+
 		libwebsocket_callback_on_writable_all_protocol(
 					       libwebsockets_get_protocol(wsi));
 		break;
@@ -899,13 +914,13 @@ static struct libwebsocket_protocols protocols[] = {
 		"lws-mirror-protocol",
 		callback_lws_mirror,
 		sizeof(struct per_session_data__lws_mirror),
-		128,
+		65536,
 	},
   {
     "ledpanel-frame",
     callback_ledpanel_frame,
     sizeof(struct per_session_data__ledpanel_frame),
-    128,
+   65536,
   },
 	{ NULL, NULL, 0, 0 } /* terminator */
 };
@@ -1079,6 +1094,9 @@ int main(int argc, char **argv)
 		lwsl_err("libwebsocket init failed\n");
 		return -1;
 	}
+
+framebuffer = malloc(65536);
+
 
 	n = 0;
 	while (n >= 0 && !force_exit) {
