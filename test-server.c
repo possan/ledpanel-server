@@ -29,6 +29,12 @@
 #include <fcntl.h>
 #include <assert.h>
 
+#include "led-matrix.h"
+
+using rgb_matrix::GPIO;
+using rgb_matrix::RGBMatrix;
+using rgb_matrix::Canvas;
+
 #ifdef _WIN32
 #include <io.h>
 #ifdef EXTERNAL_POLL
@@ -967,6 +973,15 @@ int main(int argc, char **argv)
 	int daemonize = 0;
 #endif
 
+  GPIO io;
+
+
+
+
+  int rows = 32;   // A 32x32 display. Use 16 when this is a 16x32 display.
+  int chain = 2;   // Number of boards chained together.
+  Canvas *canvas = new RGBMatrix(&io, rows, chain);
+
 	memset(&info, 0, sizeof info);
 	info.port = 7681;
 
@@ -1160,6 +1175,8 @@ done:
 	libwebsocket_context_destroy(context);
 
 	lwsl_notice("libwebsockets-test-server exited cleanly\n");
+
+  delete canvas;
 
 #ifndef WIN32
 	closelog();
