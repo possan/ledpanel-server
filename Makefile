@@ -34,5 +34,7 @@ clean:
 	rm -f *.o $(OBJECTS) $(BINARIES)
 	$(MAKE) -C lib clean
 
-test-server: test-server.c 
-	gcc -o test-server -DINSTALL_DATADIR= -lwebsockets -I /usr/local/include -L /usr/local/lib/ test-server.c
+test-server: test-server.cc
+	# gcc -o test-server -DINSTALL_DATADIR= -lwebsockets -I /usr/local/include -L /usr/local/lib/ test-server.c
+	gcc -o test-server -DINSTALL_DATADIR=  -lwebsockets -I /usr/local/include -I include/ -L /usr/local/lib/ -L lib -lrgbmatrix -lrt -lm -lpthread -lstdc++ -Wall -O3 -g -DADAFRUIT_RGBMATRIX_HAT -fno-strict-aliasing lib/gpio.cc lib/thread.cc lib/framebuffer.cc lib/led-matrix.cc test-server.cc
+

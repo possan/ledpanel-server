@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-fpermissive"
 /*
  * libwebsockets-test-server - libwebsockets test implementation
  *
@@ -20,6 +21,9 @@
  */
 #include "lws_config.h"
 
+#include "led-matrix.h"
+// #include "include/gpio.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <getopt.h>
@@ -29,11 +33,9 @@
 #include <fcntl.h>
 #include <assert.h>
 
-#include "led-matrix.h"
-
-using rgb_matrix::GPIO;
-using rgb_matrix::RGBMatrix;
-using rgb_matrix::Canvas;
+// using rgb_matrix::GPIO;
+// using rgb_matrix::RGBMatrix;
+// using rgb_matrix::Canvas;
 
 #ifdef _WIN32
 #include <io.h>
@@ -58,6 +60,13 @@ int count_pollfds;
 #endif
 static volatile int force_exit = 0;
 static struct libwebsocket_context *context;
+
+static rgb_matrix::Canvas *canvas;
+static rgb_matrix::GPIO *io;
+
+int chain = 5;
+int cols = 32 * chain;
+int rows = 32;
 
 /*
  * This demo server shows how to use libwebsockets for one or more
@@ -752,7 +761,8 @@ callback_ledpanel_frame(struct libwebsocket_context *context,
 			enum libwebsocket_callback_reasons reason,
 					       void *user, void *in, size_t len)
 {
-	int n;
+	int n, i, x, y;
+          char *inbytes;
 	struct per_session_data__lws_mirror *pss = (struct per_session_data__lws_mirror *)user;
 
 	switch (reason) {
@@ -851,10 +861,19 @@ choke:
 done:
 */
 
-		char *inbytes = (char *)in;
-		int i;
-for(i=0; i<len; i++) {
+ 		inbytes = (char *)in;
+		for(i=0; i<len; i++) {
 			framebuffer[i] = (inbytes[i] - '0') * 32;
+		}
+
+		for(y=0; y<rows; y++) {
+                	for(x=0; x<cols; x++) {
+				i = (y * cols + x) * 3;
+				unsigned char _r = framebuffer[i];
+				unsigned char _g = framebuffer[i+1];
+				unsigned char _b = framebuffer[i+2];
+				canvas->SetPixel(x, y, _r, _g, _b);
+			}
 		}
 
 
@@ -953,6 +972,7 @@ static struct option options[] = {
 	{ NULL, 0, 0, 0 }
 };
 
+
 int main(int argc, char **argv)
 {
 	char cert_path[1024];
@@ -973,14 +993,17 @@ int main(int argc, char **argv)
 	int daemonize = 0;
 #endif
 
-  GPIO io;
+
+
+        io = new rgb_matrix::GPIO();
+
+  if (!io->Init())
+    return 1;
+    
 
 
 
-
-  int rows = 32;   // A 32x32 display. Use 16 when this is a 16x32 display.
-  int chain = 2;   // Number of boards chained together.
-  Canvas *canvas = new RGBMatrix(&io, rows, chain);
+	canvas = new rgb_matrix::RGBMatrix(io, rows, chain);
 
 	memset(&info, 0, sizeof info);
 	info.port = 7681;
@@ -1110,7 +1133,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-framebuffer = malloc(65536);
+	framebuffer = malloc(65536);
 
 
 	n = 0;
@@ -1184,3 +1207,5 @@ done:
 
 	return 0;
 }
+
+
