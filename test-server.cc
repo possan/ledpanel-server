@@ -863,7 +863,7 @@ done:
 
  		inbytes = (char *)in;
 		for(i=0; i<len; i++) {
-			framebuffer[i] = (inbytes[i] - '0') * 32;
+			framebuffer[i] = (inbytes[i] - 32) * 4;// - '0') * 32;
 		}
 
 		for(y=0; y<rows; y++) {
