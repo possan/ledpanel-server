@@ -67,6 +67,7 @@ static rgb_matrix::GPIO *io;
 int chain = 5;
 int cols = 32 * chain;
 int rows = 32;
+unsigned char *framebuffer;
 
 /*
  * This demo server shows how to use libwebsockets for one or more
@@ -87,8 +88,6 @@ enum demo_protocols {
 	/* always first */
 	PROTOCOL_HTTP = 0,
 
-	PROTOCOL_DUMB_INCREMENT,
-	PROTOCOL_LWS_MIRROR,
         PROTOCOL_LEDPANEL_FRAME,
 
 	/* always last */
@@ -527,232 +526,6 @@ try_to_reuse:
 }
 
 
-/* dumb_increment protocol */
-
-/*
- * one of these is auto-created for each connection and a pointer to the
- * appropriate instance is passed to the callback in the user parameter
- *
- * for this example protocol we use it to individualize the count for each
- * connection.
- */
-
-struct per_session_data__dumb_increment {
-	int number;
-};
-
-static int
-callback_dumb_increment(struct libwebsocket_context *context,
-			struct libwebsocket *wsi,
-			enum libwebsocket_callback_reasons reason,
-					       void *user, void *in, size_t len)
-{
-	int n, m;
-	unsigned char buf[LWS_SEND_BUFFER_PRE_PADDING + 512 +
-						  LWS_SEND_BUFFER_POST_PADDING];
-	unsigned char *p = &buf[LWS_SEND_BUFFER_PRE_PADDING];
-	struct per_session_data__dumb_increment *pss = (struct per_session_data__dumb_increment *)user;
-
-	switch (reason) {
-
-	case LWS_CALLBACK_ESTABLISHED:
-		lwsl_info("callback_dumb_increment: "
-						 "LWS_CALLBACK_ESTABLISHED\n");
-		pss->number = 0;
-		break;
-
-	case LWS_CALLBACK_SERVER_WRITEABLE:
-		n = sprintf((char *)p, "%d", pss->number++);
-		m = libwebsocket_write(wsi, p, n, LWS_WRITE_TEXT);
-		if (m < n) {
-			lwsl_err("ERROR %d writing to di socket\n", n);
-			return -1;
-		}
-		if (close_testing && pss->number == 50) {
-			lwsl_info("close tesing limit, closing\n");
-			return -1;
-		}
-		break;
-
-	case LWS_CALLBACK_RECEIVE:
-//		fprintf(stderr, "rx %d\n", (int)len);
-		if (len < 6)
-			break;
-		if (strcmp((const char *)in, "reset\n") == 0)
-			pss->number = 0;
-		break;
-	/*
-	 * this just demonstrates how to use the protocol filter. If you won't
-	 * study and reject connections based on header content, you don't need
-	 * to handle this callback
-	 */
-
-	case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
-		dump_handshake_info(wsi);
-		/* you could return non-zero here and kill the connection */
-		break;
-
-	default:
-		break;
-	}
-
-	return 0;
-}
-
-
-/* lws-mirror_protocol */
-
-#define MAX_MESSAGE_QUEUE 32
-
-struct per_session_data__lws_mirror {
-	struct libwebsocket *wsi;
-	int ringbuffer_tail;
-};
-
-unsigned char *framebuffer;
-unsigned long framecounter;
-
-struct per_session_data__ledpanel_frame {
-	struct libwebsocket *wsi;
-	// int ringbuffer_tail;
-        unsigned char *framedata;
-};
-
-struct a_message {
-	void *payload;
-	size_t len;
-};
-
-static struct a_message ringbuffer[MAX_MESSAGE_QUEUE];
-static int ringbuffer_head;
-
-static int
-callback_lws_mirror(struct libwebsocket_context *context,
-			struct libwebsocket *wsi,
-			enum libwebsocket_callback_reasons reason,
-					       void *user, void *in, size_t len)
-{
-	int n;
-	struct per_session_data__lws_mirror *pss = (struct per_session_data__lws_mirror *)user;
-
-	switch (reason) {
-
-	case LWS_CALLBACK_ESTABLISHED:
-		lwsl_info("callback_lws_mirror: LWS_CALLBACK_ESTABLISHED\n");
-		pss->ringbuffer_tail = ringbuffer_head;
-		pss->wsi = wsi;
-		break;
-
-	case LWS_CALLBACK_PROTOCOL_DESTROY:
-		lwsl_notice("mirror protocol cleaning up\n");
-		for (n = 0; n < sizeof ringbuffer / sizeof ringbuffer[0]; n++)
-			if (ringbuffer[n].payload)
-				free(ringbuffer[n].payload);
-		break;
-
-	case LWS_CALLBACK_SERVER_WRITEABLE:
-		if (close_testing)
-			break;
-		while (pss->ringbuffer_tail != ringbuffer_head) {
-
-			n = libwebsocket_write(wsi, (unsigned char *)
-				   ringbuffer[pss->ringbuffer_tail].payload +
-				   LWS_SEND_BUFFER_PRE_PADDING,
-				   ringbuffer[pss->ringbuffer_tail].len,
-								LWS_WRITE_TEXT);
-			if (n < 0) {
-				lwsl_err("ERROR %d writing to mirror socket\n", n);
-				return -1;
-			}
-			if (n < ringbuffer[pss->ringbuffer_tail].len)
-				lwsl_err("mirror partial write %d vs %d\n",
-				       n, ringbuffer[pss->ringbuffer_tail].len);
-
-			if (pss->ringbuffer_tail == (MAX_MESSAGE_QUEUE - 1))
-				pss->ringbuffer_tail = 0;
-			else
-				pss->ringbuffer_tail++;
-
-			if (((ringbuffer_head - pss->ringbuffer_tail) &
-				  (MAX_MESSAGE_QUEUE - 1)) == (MAX_MESSAGE_QUEUE - 15))
-				libwebsocket_rx_flow_allow_all_protocol(
-					       libwebsockets_get_protocol(wsi));
-
-			// lwsl_debug("tx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
-
-			if (lws_partial_buffered(wsi) || lws_send_pipe_choked(wsi)) {
-				libwebsocket_callback_on_writable(context, wsi);
-				break;
-			}
-			/*
-			 * for tests with chrome on same machine as client and
-			 * server, this is needed to stop chrome choking
-			 */
-#ifdef _WIN32
-			Sleep(1);
-#else
-			usleep(1000);
-#endif
-		}
-		break;
-
-	case LWS_CALLBACK_RECEIVE:
-
-		if (((ringbuffer_head - pss->ringbuffer_tail) &
-				  (MAX_MESSAGE_QUEUE - 1)) == (MAX_MESSAGE_QUEUE - 1)) {
-			lwsl_err("dropping!\n");
-			goto choke;
-		}
-
-		if (ringbuffer[ringbuffer_head].payload)
-			free(ringbuffer[ringbuffer_head].payload);
-
-		ringbuffer[ringbuffer_head].payload =
-				malloc(LWS_SEND_BUFFER_PRE_PADDING + len +
-						  LWS_SEND_BUFFER_POST_PADDING);
-		ringbuffer[ringbuffer_head].len = len;
-		memcpy((char *)ringbuffer[ringbuffer_head].payload +
-					  LWS_SEND_BUFFER_PRE_PADDING, in, len);
-		if (ringbuffer_head == (MAX_MESSAGE_QUEUE - 1))
-			ringbuffer_head = 0;
-		else
-			ringbuffer_head++;
-
-		if (((ringbuffer_head - pss->ringbuffer_tail) &
-				  (MAX_MESSAGE_QUEUE - 1)) != (MAX_MESSAGE_QUEUE - 2))
-			goto done;
-
-choke:
-		lwsl_debug("LWS_CALLBACK_RECEIVE: throttling %p\n", wsi);
-		libwebsocket_rx_flow_control(wsi, 0);
-
-//		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
-done:
-		libwebsocket_callback_on_writable_all_protocol(
-					       libwebsockets_get_protocol(wsi));
-		break;
-
-	/*
-	 * this just demonstrates how to use the protocol filter. If you won't
-	 * study and reject connections based on header content, you don't need
-	 * to handle this callback
-	 */
-
-	case LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION:
-		dump_handshake_info(wsi);
-		/* you could return non-zero here and kill the connection */
-		break;
-
-	default:
-		break;
-	}
-
-	return 0;
-}
-
-
-
-
 
 
 static int
@@ -762,26 +535,27 @@ callback_ledpanel_frame(struct libwebsocket_context *context,
 					       void *user, void *in, size_t len)
 {
 	int n, i, x, y;
-          char *inbytes;
-	struct per_session_data__lws_mirror *pss = (struct per_session_data__lws_mirror *)user;
+        char *inbytes;
+	char cmd;
+	// struct per_session_data__lws_mirror *pss = (struct per_session_data__lws_mirror *)user;
 
 	switch (reason) {
 
 	case LWS_CALLBACK_ESTABLISHED:
 		lwsl_info("callback_lws_mirror: LWS_CALLBACK_ESTABLISHED\n");
-		pss->ringbuffer_tail = ringbuffer_head;
-		pss->wsi = wsi;
+		// pss->ringbuffer_tail = ringbuffer_head;
+		// pss->wsi = wsi;
 		break;
 
 	case LWS_CALLBACK_PROTOCOL_DESTROY:
 		lwsl_notice("mirror protocol cleaning up\n");
-		for (n = 0; n < sizeof ringbuffer / sizeof ringbuffer[0]; n++)
-			if (ringbuffer[n].payload)
-				free(ringbuffer[n].payload);
+		//for (n = 0; n < sizeof ringbuffer / sizeof ringbuffer[0]; n++)
+		//	if (ringbuffer[n].payload)
+		//		free(ringbuffer[n].payload);
 		break;
 
 	case LWS_CALLBACK_SERVER_WRITEABLE:
-		if (close_testing)
+		/* if (close_testing)
 			break;
 		while (pss->ringbuffer_tail != ringbuffer_head) {
 
@@ -814,61 +588,41 @@ callback_ledpanel_frame(struct libwebsocket_context *context,
 				libwebsocket_callback_on_writable(context, wsi);
 				break;
 			}
-			/*
-			 * for tests with chrome on same machine as client and
-			 * server, this is needed to stop chrome choking
-			 */
 #ifdef _WIN32
 			Sleep(1);
 #else
 			usleep(1000);
 #endif
 		}
+		*/
 		break;
 
 	case LWS_CALLBACK_RECEIVE:
 		printf("frame data received: %d bytes\n", len);
-/*
-		if (((ringbuffer_head - pss->ringbuffer_tail) &
-				  (MAX_MESSAGE_QUEUE - 1)) == (MAX_MESSAGE_QUEUE - 1)) {
-			lwsl_err("dropping!\n");
-			goto choke;
+
+		inbytes = (char *)in;
+		cmd = inbytes[0];
+
+		for(i=0; i<20; i++) {
+			printf("%02X ", inbytes[i]);
 		}
+		printf("\n");
 
-		if (ringbuffer[ringbuffer_head].payload)
-			free(ringbuffer[ringbuffer_head].payload);
 
-		ringbuffer[ringbuffer_head].payload =
-				malloc(LWS_SEND_BUFFER_PRE_PADDING + len +
-						  LWS_SEND_BUFFER_POST_PADDING);
-		ringbuffer[ringbuffer_head].len = len;
-		memcpy((char *)ringbuffer[ringbuffer_head].payload +
-					  LWS_SEND_BUFFER_PRE_PADDING, in, len);
-		if (ringbuffer_head == (MAX_MESSAGE_QUEUE - 1))
-			ringbuffer_head = 0;
-		else
-			ringbuffer_head++;
+	        if (cmd == 'S') {
+        	        if (len == (32*5*3)+2) {
+                	        y = inbytes[1];
+                        	for(x=0; x<32*5*3; x++) {
+                                	i = (y * cols * 3);
+					framebuffer[i + x] = inbytes[x + 2];
+                	        }
+                	}
+        	}
+        	else {
 
-		if (((ringbuffer_head - pss->ringbuffer_tail) &
-				  (MAX_MESSAGE_QUEUE - 1)) != (MAX_MESSAGE_QUEUE - 2))
-			goto done;
-
-choke:
-		lwsl_debug("LWS_CALLBACK_RECEIVE: throttling %p\n", wsi);
-		libwebsocket_rx_flow_control(wsi, 0);
-
-//		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
-done:
-*/
 		if (len == 32*32*5*3) {
- 			inbytes = (char *)in;
 			for(i=0; i<len; i++) {
 				framebuffer[i] = inbytes[i]; // - 32) * 4;// - '0') * 32;
-	
-				if (i < 10) {
-					printf("%02X ", inbytes[i]);
-				}
-				printf("");
 			}
 
 			for(y=0; y<rows; y++) {
@@ -888,7 +642,17 @@ done:
 	//		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
 		}
 
+}
 
+			for(y=0; y<rows; y++) {
+                		for(x=0; x<cols; x++) {
+					i = (y * cols + x) * 3;
+					unsigned char _r = framebuffer[i];
+					unsigned char _g = framebuffer[i+1];
+					unsigned char _b = framebuffer[i+2];
+					canvas->SetPixel(x, y, _r, _g, _b);
+				}
+			}
 
 		libwebsocket_callback_on_writable_all_protocol(
 					       libwebsockets_get_protocol(wsi));
@@ -941,23 +705,11 @@ static struct libwebsocket_protocols protocols[] = {
 		0,			/* max frame size / rx buffer */
 	},
 	{
-		"dumb-increment-protocol",
-		callback_dumb_increment,
-		sizeof(struct per_session_data__dumb_increment),
-		10,
-	},
-	{
-		"lws-mirror-protocol",
-		callback_lws_mirror,
-		sizeof(struct per_session_data__lws_mirror),
+		"ledpanel-frame",
+		callback_ledpanel_frame,
+		100,
 		65536,
 	},
-  {
-    "ledpanel-frame",
-    callback_ledpanel_frame,
-    sizeof(struct per_session_data__ledpanel_frame),
-   65536,
-  },
 	{ NULL, NULL, 0, 0 } /* terminator */
 };
 
@@ -1158,12 +910,16 @@ int main(int argc, char **argv)
 		 * live websocket connection using the DUMB_INCREMENT protocol,
 		 * as soon as it can take more packets (usually immediately)
 		 */
+	
+usleep(1000);
 
+/*
 		ms = (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
 		if ((ms - oldms) > 50) {
 			libwebsocket_callback_on_writable_all_protocol(&protocols[PROTOCOL_DUMB_INCREMENT]);
 			oldms = ms;
 		}
+*/
 
 #ifdef EXTERNAL_POLL
 
