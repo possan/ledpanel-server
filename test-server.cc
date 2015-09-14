@@ -691,7 +691,7 @@ callback_lws_mirror(struct libwebsocket_context *context,
 #ifdef _WIN32
 			Sleep(1);
 #else
-			usleep(1);
+			usleep(1000);
 #endif
 		}
 		break;
@@ -821,7 +821,7 @@ callback_ledpanel_frame(struct libwebsocket_context *context,
 #ifdef _WIN32
 			Sleep(1);
 #else
-			usleep(1);
+			usleep(1000);
 #endif
 		}
 		break;
@@ -860,22 +860,33 @@ choke:
 //		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
 done:
 */
-
- 		inbytes = (char *)in;
-		for(i=0; i<len; i++) {
-			framebuffer[i] = (inbytes[i] - 32) * 4;// - '0') * 32;
-		}
-
-		for(y=0; y<rows; y++) {
-                	for(x=0; x<cols; x++) {
-				i = (y * cols + x) * 3;
-				unsigned char _r = framebuffer[i];
-				unsigned char _g = framebuffer[i+1];
-				unsigned char _b = framebuffer[i+2];
-				canvas->SetPixel(x, y, _r, _g, _b);
+		if (len == 32*32*5*3) {
+ 			inbytes = (char *)in;
+			for(i=0; i<len; i++) {
+				framebuffer[i] = inbytes[i]; // - 32) * 4;// - '0') * 32;
+	
+				if (i < 10) {
+					printf("%02X ", inbytes[i]);
+				}
+				printf("");
 			}
-		}
 
+			for(y=0; y<rows; y++) {
+                		for(x=0; x<cols; x++) {
+					i = (y * cols + x) * 3;
+					unsigned char _r = framebuffer[i];
+					unsigned char _g = framebuffer[i+1];
+					unsigned char _b = framebuffer[i+2];
+					canvas->SetPixel(x, y, _r, _g, _b);
+				}
+			}
+
+		} else {
+			lwsl_debug("LWS_CALLBACK_RECEIVE: throttling %p\n", wsi);
+			libwebsocket_rx_flow_control(wsi, 0);
+
+	//		lwsl_debug("rx fifo %d\n", (ringbuffer_head - pss->ringbuffer_tail) & (MAX_MESSAGE_QUEUE - 1));
+		}
 
 
 
