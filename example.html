@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Led panel Websocket test app</title>
+</head>
+<body>
+
+<p>
+<span id="wsdi_status">Not initialized</span>
+<span id="number"></span>
+</p>
+
+<div>
+<canvas id="c1" width="1000" height="500"></canvas>
+</div>
+
+<script src="ledpanel.js"></script>
+<script type="text/javascript">
+
+function mapppp(x, xx, yy) {
+	x = 128 + 100 * Math.sin(
+		2 * Math.sin(Math.cos(x + xx/27) * 3) +
+		2 * Math.cos((x + yy / 50) * 1.77) +
+		2 * Math.sin(x / 4 + xx / 35 + yy / 31)
+	);
+	x /= 100;
+	x *= x;
+	x *= x;
+	x = Math.round(x);
+	x >>= 2;
+	x <<= 1;
+	if (x < 0) x = 0;
+	if (x > 255) x = 255;
+	return x;
+}
+
+function sendFrame() {
+	// console.log('sending frame');
+
+	for(var j=0; j<rows; j++) {
+		for(var i=0; i<cols; i++) {
+			var o = (j * cols + i) * 3;
+			var _r = (((((frame % 64)* 1) ^ (cols % 5 + j % 9)) % 64) < (j ^ i)) ? 160 : 0;
+			var _g = 0;
+			var _b = 0;
+			framebuffer[o + 0] = _r;
+			framebuffer[o + 1] = _g;
+			framebuffer[o + 2] = _b;
+		}
+	}
+
+	var chars = ['0', '1', '2', '3', '4', '5', '6', '7'];
+
+	var dummydata = [];
+	for(var j=0; j<rows; j++) {
+		for(var i=0; i<cols; i++) {
+			var o = (j * cols + i) * 3;
+			var _r = Math.round(_gamma(framebuffer[o + 0]));
+			var _g = Math.round(_gamma(framebuffer[o + 1]));
+			var _b = Math.round(_gamma(framebuffer[o + 2]));
+			if (_r < 0) _r = 0; if (_r > 255) _r = 255;
+			if (_g < 0) _g = 0; if (_g > 255) _g = 255;
+			if (_b < 0) _b = 0; if (_b > 255) _b = 255;
+			dummydata.push(String.fromCharCode(32 + Math.floor(_r / 4)));
+			dummydata.push(String.fromCharCode(32 + Math.floor(_g / 4)));
+			dummydata.push(String.fromCharCode(32 + Math.floor(_b / 4)));
+		}
+	}
+	dummydata = dummydata.join('');
+
+	// console.log('sending data', dummydata.length);
+
+	socket.send(dummydata);
+
+	frame ++;
+
+	updateCanvas();
+	queueFrame(80);
+}
+
+function initCanvas() {
+	var canvas = document.getElementById('c1');
+	canvas.height = rows * 8;
+	canvas.width = cols * 8;
+	ctx = canvas.getContext("2d");
+	canvas.addEventListener('mousemove', ev_mousemove, false);
+	canvas.addEventListener('mousedown', ev_mousedown, false);
+	canvas.addEventListener('mouseup', ev_mouseup, false);
+}
+
+function prepareFrame(callback) {
+	for(var j=0; j<rows; j++) {
+		for(var i=0; i<cols; i++) {
+			var o = (j * cols + i) * 3;
+			var _r = i * 255 / 64;// (((((frame % 64)* 1) ^ (cols % 5 + j % 9)) % 64) < (j ^ i)) ? 160 : 0;// Math.random() * 150;//Math.round(mapppp(i / 20.0 + Math.cos(j / 13) + frame / 7.0, i, j));
+			var _g = 0;
+			// (((frame * 4) % cols) == i) ? 200 : 0;// (16 - Math.abs(16 - (i % 32))) * 1 * mapppp(Math.cos(i / 9) + j / 17.0 + frame / 16.0, i, j);
+			var _b = 0;
+			// (((frame * 6) % cols) < (i ^ j)) ? 150 : 0;;// (16 - Math.abs(16 - (( j + 1 * Math.sin(frame + i)) % 32))) * 15; // * 255 / 32;// Math.round(mapppp(i / 7.0 + j / 9 + frame / 19.0, i, j));
+			//	framebuffer[o + 0] *= 0.8;
+			//	framebuffer[o + 1] *= 0.8;
+			//	framebuffer[o + 2] *= 0.8;
+			framebuffer[o + 0] = _r;
+			framebuffer[o + 1] = _g;
+			framebuffer[o + 2] = _b;
+		}
+	}
+
+	callback();
+}
+
+initLedpanel(prepareFrame);
+
+</script>
+</body>
+</html>
